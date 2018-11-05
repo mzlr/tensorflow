@@ -70,6 +70,7 @@ from tensorflow.python.platform import googletest
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import server_lib
 from tensorflow.python.util import compat
+from tensorflow.python.util import deprecation
 from tensorflow.python.util import memory
 from tensorflow.python.util import nest
 from tensorflow.python.util import tf_inspect
@@ -506,9 +507,9 @@ def disable_control_flow_v2(unused_msg):
 def assert_no_new_pyobjects_executing_eagerly(f):
   """Decorator for asserting that no new Python objects persist after a test.
 
-  Runs the test multiple times executing eagerly, first as a warmup and then
-  several times to let objects accumulate. The warmup helps ignore caches which
-  do not grow as the test is run repeatedly.
+  Runs the test multiple times executing eagerly, first as a warmup and then to
+  let objects accumulate. The warmup helps ignore caches which do not grow as
+  the test is run repeatedly.
 
   Useful for checking that there are no missing Py_DECREFs in the C exercised by
   a bit of Python.
@@ -518,7 +519,14 @@ def assert_no_new_pyobjects_executing_eagerly(f):
     """Warms up, gets an object count, runs the test, checks for new objects."""
     with context.eager_mode():
       gc.disable()
-      f(self, **kwargs)
+      # Run the test 2 times as warmup, in an attempt to fill up caches, which
+      # should not grow as the test is run repeatedly below.
+      #
+      # TODO(b/117156879): Running warmup twice is black magic; we have seen
+      # tests that fail with 1 warmup run, and pass with 2, on various versions
+      # of python2.7.x.
+      for _ in range(2):
+        f(self, **kwargs)
       gc.collect()
       previous_count = len(gc.get_objects())
       if ops.has_default_graph():
@@ -756,7 +764,8 @@ def run_all_in_graph_and_eager_modes(cls):
   """Execute all test methods in the given class with and without eager."""
   base_decorator = run_in_graph_and_eager_modes
   for name, value in cls.__dict__.copy().items():
-    if callable(value) and name.startswith("test"):
+    if callable(value) and name.startswith(
+        "test") and not name.startswith("testSkipEager"):
       setattr(cls, name, base_decorator(value))
   return cls
 
@@ -824,7 +833,7 @@ def run_in_graph_and_eager_modes(func=None,
     if tf_inspect.isclass(f):
       raise ValueError(
           "`run_test_in_graph_and_eager_modes` only supports test methods. "
-          "Did you mean to use `run_all_tests_in_graph_and_eager_modes`?")
+          "Did you mean to use `run_all_in_graph_and_eager_modes`?")
 
     def decorated(self, **kwargs):
       try:
@@ -1251,6 +1260,8 @@ class TensorFlowTestCase(googletest.TestCase):
         yield cached
 
   @contextlib.contextmanager
+  @deprecation.deprecated(None, "Use `self.session()` or "
+                          "`self.cached_session()` instead.")
   def test_session(self,
                    graph=None,
                    config=None,
@@ -1695,7 +1706,7 @@ class TensorFlowTestCase(googletest.TestCase):
     self.assertGreater(np.min(a), comparison_target)
 
   def assertAllLess(self, a, comparison_target):
-    """Assert element values are all greater than a target value.
+    """Assert element values are all less than a target value.
 
     Args:
       a: The numpy `ndarray`, or anything that can be converted into a
@@ -1706,7 +1717,7 @@ class TensorFlowTestCase(googletest.TestCase):
     self.assertLess(np.max(a), comparison_target)
 
   def assertAllGreaterEqual(self, a, comparison_target):
-    """Assert element values are all greater than a target value.
+    """Assert element values are all greater than or equal to a target value.
 
     Args:
       a: The numpy `ndarray`, or anything that can be converted into a
@@ -1717,7 +1728,7 @@ class TensorFlowTestCase(googletest.TestCase):
     self.assertGreaterEqual(np.min(a), comparison_target)
 
   def assertAllLessEqual(self, a, comparison_target):
-    """Assert element values are all greater than a target value.
+    """Assert element values are all less than or equal to a target value.
 
     Args:
       a: The numpy `ndarray`, or anything that can be converted into a
@@ -1992,9 +2003,11 @@ class TensorFlowTestCase(googletest.TestCase):
       # Don't perform optimizations for tests so we don't inadvertently run
       # gpu ops on cpu
       config.graph_options.optimizer_options.opt_level = -1
+      # Disable Grappler constant folding since some tests & benchmarks
+      # use constant input and become meaningless after constant folding.
+      # DO NOT DISABLE GRAPPLER OPTIMIZERS WITHOUT CONSULTING WITH THE
+      # GRAPPLER TEAM.
       config.graph_options.rewrite_options.constant_folding = (
-          rewriter_config_pb2.RewriterConfig.OFF)
-      config.graph_options.rewrite_options.arithmetic_optimization = (
           rewriter_config_pb2.RewriterConfig.OFF)
       config.graph_options.rewrite_options.pin_to_host_optimization = (
           rewriter_config_pb2.RewriterConfig.OFF)

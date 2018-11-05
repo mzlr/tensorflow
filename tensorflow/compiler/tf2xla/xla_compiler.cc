@@ -194,6 +194,17 @@ Status XlaCompiler::CompileFunction(const XlaCompiler::CompileOptions& options,
 
   std::unique_ptr<Graph> graph = GetGraph(fbody);
 
+  // Clear the "_kernel" attribute if it is set to "host". This is used to
+  // indicate that a computation should happen on the host instead of the
+  // accelerator, but doesn't make sense in XLA.
+  const char* const kKernelAttr = "_kernel";
+  for (Node* n : graph->nodes()) {
+    string value;
+    if (GetNodeAttrSimple(n->attrs(), kKernelAttr, &value) && value == "host") {
+      n->ClearAttr(kKernelAttr);
+    }
+  }
+
   // _Arg and _Retval nodes don't exist in the stored subgraph for the function;
   // they are added by the function body looked up.  Therefore, they don't have
   // core assignments here.
@@ -349,6 +360,7 @@ Status BuildComputation(
     const std::vector<int>& arg_cores,
     const std::vector<XlaContext::Retval>& retvals,
     const std::vector<std::unique_ptr<XlaResource>>& resources,
+    std::unique_ptr<xla::XlaOp> token_output,
     bool return_updated_values_for_all_resources, bool always_return_tuple,
     xla::XlaBuilder* builder, xla::XlaComputation* computation,
     int* num_computation_outputs, int* num_nonconst_outputs,
@@ -433,6 +445,11 @@ Status BuildComputation(
       handle = xla::GetTupleElement(xla::Tuple(builder, {handle}), 0);
       elems.push_back(handle);
     }
+  }
+
+  // If we have token output, append it as the last one.
+  if (token_output) {
+    elems.push_back(*token_output);
   }
 
   *num_computation_outputs = elems.size();
@@ -739,6 +756,8 @@ Status XlaCompiler::CompileGraph(const XlaCompiler::CompileOptions& options,
                                  CompilationResult* result) {
   VLOG(1) << "Executing graph symbolically to populate XlaBuilder.";
 
+  TF_RETURN_IF_ERROR(PropagateConstIntoFunctionalNodes(
+      graph.get(), options_.flib_def, local_flib_def_.get()));
   if (VLOG_IS_ON(2)) {
     VLOG(2) << "XlaCompiler::CompileGraph: "
             << dump_graph::DumpGraphToFile(
@@ -763,6 +782,7 @@ Status XlaCompiler::CompileGraph(const XlaCompiler::CompileOptions& options,
 
   std::vector<XlaCompiler::Argument> real_args(args);
   int token_input_index = -1;
+  std::unique_ptr<xla::XlaOp> token_output;
   if (options.add_token_input_output) {
     // Add extra token input.
     token_input_index = real_args.size();
@@ -815,8 +835,7 @@ Status XlaCompiler::CompileGraph(const XlaCompiler::CompileOptions& options,
       TF_RETURN_IF_ERROR(token_or.status());
       token_inputs.push_back(token_or.ValueOrDie());
     }
-    TF_RETURN_IF_ERROR(
-        context->AppendTokenRetval(xla::AfterAll(&builder, token_inputs)));
+    token_output.reset(new xla::XlaOp(xla::AfterAll(&builder, token_inputs)));
   }
   TF_RETURN_IF_ERROR(PopNodeTokenMapping());
 
@@ -826,7 +845,7 @@ Status XlaCompiler::CompileGraph(const XlaCompiler::CompileOptions& options,
   result->outputs.resize(context->retvals().size());
   TF_RETURN_IF_ERROR(BuildComputation(
       real_args, arg_cores, context->retvals(), context->resources(),
-      options.return_updated_values_for_all_resources,
+      std::move(token_output), options.return_updated_values_for_all_resources,
       options.always_return_tuple, &builder, result->computation.get(),
       &num_computation_outputs, &num_nonconst_outputs, &result->outputs,
       &result->resource_updates));

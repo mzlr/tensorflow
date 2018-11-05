@@ -19,10 +19,13 @@ from __future__ import print_function
 
 import re
 
+from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import nest
 from tensorflow.python.eager import context
+from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import sparse_tensor
+from tensorflow.python.ops import array_ops
 from tensorflow.python.platform import test
 
 
@@ -63,6 +66,7 @@ class DatasetTestBase(test.TestCase):
     """Checks that datasets are equal. Supports both graph and eager mode."""
     self.assertEqual(dataset1.output_types, dataset2.output_types)
     self.assertEqual(dataset1.output_classes, dataset2.output_classes)
+    flattened_types = nest.flatten(dataset1.output_types)
 
     next1 = self.getNext(dataset1)
     next2 = self.getNext(dataset2)
@@ -83,8 +87,10 @@ class DatasetTestBase(test.TestCase):
             op1[i],
             (sparse_tensor.SparseTensor, sparse_tensor.SparseTensorValue)):
           self.assertSparseValuesEqual(op1[i], op2[i])
-        else:
+        elif flattened_types[i] == dtypes.string:
           self.assertAllEqual(op1[i], op2[i])
+        else:
+          self.assertAllClose(op1[i], op2[i])
 
   def assertDatasetsRaiseSameError(self,
                                    dataset1,
@@ -107,3 +113,29 @@ class DatasetTestBase(test.TestCase):
       with self.assertRaisesRegexp(exception_class,
                                    re.escape(expected_message)):
         self.evaluate(next2())
+
+  def structuredDataset(self, structure, shape=None, dtype=dtypes.int64):
+    """Returns a singleton dataset with the given structure."""
+    if shape is None:
+      shape = []
+    if structure is None:
+      return dataset_ops.Dataset.from_tensors(
+          array_ops.zeros(shape, dtype=dtype))
+    else:
+      return dataset_ops.Dataset.zip(
+          tuple([
+              self.structuredDataset(substructure, shape, dtype)
+              for substructure in structure
+          ]))
+
+  def structuredElement(self, structure, shape=None, dtype=dtypes.int64):
+    """Returns an element with the given structure."""
+    if shape is None:
+      shape = []
+    if structure is None:
+      return array_ops.zeros(shape, dtype=dtype)
+    else:
+      return tuple([
+          self.structuredElement(substructure, shape, dtype)
+          for substructure in structure
+      ])
