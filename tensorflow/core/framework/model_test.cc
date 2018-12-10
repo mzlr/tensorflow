@@ -101,15 +101,9 @@ TEST_P(AsyncKnownRatioTest, Model) {
   std::shared_ptr<Node> source1 =
       model::MakeSourceNode({1, "source1", async_known_many});
   async_known_many->add_input(source1);
-  auto cleanup1 = gtl::MakeCleanup([async_known_many, source1]() {
-    async_known_many->remove_input(source1);
-  });
   std::shared_ptr<Node> source2 =
       model::MakeSourceNode({2, "source2", async_known_many});
   async_known_many->add_input(source2);
-  auto cleanup2 = gtl::MakeCleanup([async_known_many, source2]() {
-    async_known_many->remove_input(source2);
-  });
   std::vector<int64> input_times(1, input_time);
   source1->add_processing_time(100);
   EXPECT_EQ(0, async_known_many->ProcessingTime());
@@ -166,19 +160,12 @@ TEST(InterleaveManyTest, Model) {
   std::shared_ptr<Node> meta_source =
       model::MakeSourceNode({1, "meta_source", interleave_many});
   interleave_many->add_input(meta_source);
-  auto cleanup_meta = gtl::MakeCleanup([interleave_many, meta_source]() {
-    interleave_many->remove_input(meta_source);
-  });
   std::shared_ptr<Node> source1 =
       model::MakeSourceNode({1, "source1", interleave_many});
   interleave_many->add_input(source1);
-  auto cleanup1 = gtl::MakeCleanup(
-      [interleave_many, source1]() { interleave_many->remove_input(source1); });
   std::shared_ptr<Node> source2 =
       model::MakeSourceNode({2, "source2", interleave_many});
   interleave_many->add_input(source2);
-  auto cleanup2 = gtl::MakeCleanup(
-      [interleave_many, source2]() { interleave_many->remove_input(source2); });
   std::vector<int64> input_times(1, 0);
   interleave_many->add_processing_time(100);
   EXPECT_EQ(100, interleave_many->processing_time());
@@ -210,13 +197,9 @@ TEST_P(KnownRatioTest, Model) {
   std::shared_ptr<Node> source1 =
       model::MakeSourceNode({1, "source1", known_many});
   known_many->add_input(source1);
-  auto cleanup1 = gtl::MakeCleanup(
-      [known_many, source1]() { known_many->remove_input(source1); });
   std::shared_ptr<Node> source2 =
       model::MakeSourceNode({2, "source2", known_many});
   known_many->add_input(source2);
-  auto cleanup2 = gtl::MakeCleanup(
-      [known_many, source2]() { known_many->remove_input(source2); });
   std::vector<int64> input_times(1, 0);
   source1->add_processing_time(100);
   EXPECT_EQ(0, known_many->ProcessingTime());
@@ -280,13 +263,9 @@ TEST(UnknownRatioTest, Model) {
   std::shared_ptr<Node> source1 =
       model::MakeSourceNode({1, "source1", unknown_many});
   unknown_many->add_input(source1);
-  auto cleanup1 = gtl::MakeCleanup(
-      [unknown_many, source1]() { unknown_many->remove_input(source1); });
   std::shared_ptr<Node> source2 =
       model::MakeSourceNode({2, "source2", unknown_many});
   unknown_many->add_input(source2);
-  auto cleanup2 = gtl::MakeCleanup(
-      [unknown_many, source2]() { unknown_many->remove_input(source2); });
   std::vector<int64> input_times(1, 0);
   unknown_many->add_processing_time(100);
   EXPECT_EQ(100, unknown_many->processing_time());
@@ -315,13 +294,9 @@ TEST(UnknownTest, Model) {
   std::shared_ptr<Node> source1 =
       model::MakeSourceNode({1, "source1", unknown});
   unknown->add_input(source1);
-  auto cleanup1 = gtl::MakeCleanup(
-      [unknown, source1]() { unknown->remove_input(source1); });
   std::shared_ptr<Node> source2 =
       model::MakeSourceNode({2, "source2", unknown});
   unknown->add_input(source2);
-  auto cleanup2 = gtl::MakeCleanup(
-      [unknown, source2]() { unknown->remove_input(source2); });
   std::vector<int64> input_times(1, 0);
   source1->add_processing_time(100);
   EXPECT_EQ(0, unknown->ProcessingTime());
@@ -353,6 +328,62 @@ TEST(UnknownTest, Model) {
   EXPECT_EQ(1, unknown->num_elements());
   EXPECT_EQ(100, unknown->ProcessingTime());
   EXPECT_EQ(100, unknown->OutputTime(&input_times));
+}
+
+class TestNode : public model::Node {
+ public:
+  using model::Node::Node;
+
+  virtual ~TestNode() {}
+
+ protected:
+  std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
+      SHARED_LOCKS_REQUIRED(mu_) {
+    return nullptr;
+  }
+
+  int64 OutputTimeLocked(std::vector<int64>* input_times) const override
+      SHARED_LOCKS_REQUIRED(mu_) {
+    return 0;
+  }
+
+  int64 ProcessingTimeLocked() const override SHARED_LOCKS_REQUIRED(mu_) {
+    return 0;
+  }
+};
+
+TEST(SetterGetterTest, Node) {
+  std::shared_ptr<TestNode> node =
+      std::make_shared<TestNode>(model::Node::Args{-1, "TestNode", nullptr});
+  EXPECT_EQ(-1, node->id());
+  EXPECT_EQ("TestNode", node->name());
+  EXPECT_EQ(nullptr, node->output());
+
+  EXPECT_EQ(0, node->buffered_bytes());
+  node->add_buffered_bytes(42);
+  EXPECT_EQ(42, node->buffered_bytes());
+
+  EXPECT_EQ(0, node->processing_time());
+  node->record_start(1);
+  EXPECT_EQ(0, node->processing_time());
+  node->record_stop(41);
+  EXPECT_EQ(40, node->processing_time());
+  node->add_processing_time(2);
+  EXPECT_EQ(42, node->processing_time());
+
+  std::shared_ptr<TestNode> input =
+      std::make_shared<TestNode>(model::Node::Args{-1, "TestInput", node});
+  EXPECT_EQ(node.get(), input->output());
+  EXPECT_EQ(0, node->inputs().size());
+  node->add_input(input);
+  EXPECT_EQ(1, node->inputs().size());
+  EXPECT_EQ(input, node->inputs().front());
+  node->remove_input(input);
+  EXPECT_EQ(0, node->inputs().size());
+
+  EXPECT_EQ(0, node->num_elements());
+  node->record_element();
+  EXPECT_EQ(1, node->num_elements());
 }
 
 }  // namespace

@@ -29,6 +29,10 @@ limitations under the License.
 #include "tensorflow/lite/string_util.h"
 #include "tensorflow/lite/tools/benchmark/logging.h"
 
+#ifdef GEMMLOWP_PROFILING
+#include "gemmlowp/profiling/profiler.h"
+#endif
+
 #ifdef TFLITE_CUSTOM_OPS_HEADER
 void RegisterSelectedOps(::tflite::MutableOpResolver* resolver);
 #endif
@@ -60,6 +64,21 @@ void ProfilingListener::OnSingleRunEnd() {
   auto profile_events = profiler_.GetProfileEvents();
   has_profiles_ = !profile_events.empty();
   summarizer_.ProcessProfiles(profile_events, *interpreter_);
+}
+
+void GemmlowpProfilingListener::OnBenchmarkStart(
+    const BenchmarkParams& params) {
+#ifdef GEMMLOWP_PROFILING
+  gemmlowp::RegisterCurrentThreadForProfiling();
+  gemmlowp::StartProfiling();
+#endif
+}
+
+void GemmlowpProfilingListener::OnBenchmarkEnd(
+    const BenchmarkResults& results) {
+#ifdef GEMMLOWP_PROFILING
+  gemmlowp::FinishProfiling();
+#endif
 }
 
 namespace {
@@ -162,7 +181,18 @@ bool PopulateInputLayerInfo(
   return true;
 }
 
-BenchmarkParams GetDefaultParams() {
+std::vector<int> TfLiteIntArrayToVector(const TfLiteIntArray* int_array) {
+  std::vector<int> values;
+  values.reserve(int_array->size);
+  for (size_t i = 0; i < int_array->size; i++) {
+    values.push_back(int_array->data[i]);
+  }
+  return values;
+}
+
+}  // namespace
+
+BenchmarkParams BenchmarkTfLiteModel::DefaultParams() {
   BenchmarkParams default_params = BenchmarkModel::DefaultParams();
   default_params.AddParam("graph", BenchmarkParam::Create<std::string>(""));
   default_params.AddParam("input_layer",
@@ -173,16 +203,13 @@ BenchmarkParams GetDefaultParams() {
   return default_params;
 }
 
-}  // namespace
-
 BenchmarkTfLiteModel::BenchmarkTfLiteModel()
-    : BenchmarkModel(GetDefaultParams()) {
-  AddListener(&profiling_listener_);
-}
+    : BenchmarkTfLiteModel(DefaultParams()) {}
 
 BenchmarkTfLiteModel::BenchmarkTfLiteModel(BenchmarkParams params)
     : BenchmarkModel(std::move(params)) {
   AddListener(&profiling_listener_);
+  AddListener(&gemmlowp_profiling_listener_);
 }
 
 std::vector<Flag> BenchmarkTfLiteModel::GetFlags() {
@@ -232,12 +259,10 @@ uint64_t BenchmarkTfLiteModel::ComputeInputBytes() {
 void BenchmarkTfLiteModel::PrepareInputsAndOutputs() {
   auto interpreter_inputs = interpreter->inputs();
   // Set the values of the input tensors.
-  for (int j = 0; j < inputs.size(); ++j) {
-    const InputLayerInfo& input = inputs[j];
+  for (int j = 0; j < interpreter_inputs.size(); ++j) {
     int i = interpreter_inputs[j];
     TfLiteTensor* t = interpreter->tensor(i);
-    std::vector<int> sizes = input.shape;
-
+    std::vector<int> sizes = TfLiteIntArrayToVector(t->dims);
     // TODO(ahentz): below we ignore the O-th dimension (number of batches).
     if (t->type == kTfLiteFloat32) {
       FillRandomValue<float>(
@@ -256,12 +281,17 @@ void BenchmarkTfLiteModel::PrepareInputsAndOutputs() {
           interpreter->typed_tensor<uint8_t>(i),
           std::vector<int>(sizes.begin() + 1, sizes.end()),
           []() { return static_cast<uint8_t>(rand()) % 255; });
+    } else if (t->type == kTfLiteInt8) {
+      FillRandomValue<int8_t>(
+          interpreter->typed_tensor<int8_t>(i),
+          std::vector<int>(sizes.begin() + 1, sizes.end()),
+          []() { return static_cast<int8_t>(rand()) % 255 - 127; });
     } else if (t->type == kTfLiteString) {
       tflite::DynamicBuffer buffer;
       FillRandomString(&buffer, sizes, []() {
         return "we're have some friends over saturday to hang out in the yard";
       });
-      buffer.WriteToTensor(interpreter->tensor(i));
+      buffer.WriteToTensor(interpreter->tensor(i), /*new_shape=*/nullptr);
     } else {
       TFLITE_LOG(FATAL) << "Don't know how to populate tensor " << t->name
                         << " of type " << t->type;
@@ -301,6 +331,7 @@ void BenchmarkTfLiteModel::Init() {
   bool use_nnapi = params_.Get<bool>("use_nnapi");
 
   interpreter->UseNNAPI(use_nnapi);
+  ApplyDelegates();
 
   auto interpreter_inputs = interpreter->inputs();
 

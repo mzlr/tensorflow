@@ -70,6 +70,7 @@ cc_test(
     deps = [
         ":benchmark_tflite_model_lib",
         ":command_line_flags",
+        "//tensorflow/lite:framework",
         "//tensorflow/lite/testing:util",
         "@com_google_googletest//:gtest",
     ],
@@ -112,6 +113,7 @@ cc_library(
         "//tensorflow/lite:string_util",
         "//tensorflow/lite/kernels:builtin_ops",
         "//tensorflow/lite/profiling:profile_summarizer",
+        "@gemmlowp",
     ],
 )
 

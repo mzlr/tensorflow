@@ -26,6 +26,8 @@ namespace flex {
 namespace {
 // A tensor buffer that is allocated, deallocated and populated by TF Lite.
 class BaseTfLiteTensorBuffer : public tensorflow::TensorBuffer {
+  using tensorflow::TensorBuffer::TensorBuffer;
+
   TensorBuffer* root_buffer() override { return this; }
   void FillAllocationDescription(
       tensorflow::AllocationDescription* proto) const override {
@@ -60,31 +62,29 @@ class BaseTfLiteTensorBuffer : public tensorflow::TensorBuffer {
 // representation in TFLITE and TF, so we just need use memcpy().
 class TfLiteTensorBuffer : public BaseTfLiteTensorBuffer {
  public:
-  explicit TfLiteTensorBuffer(const TfLiteTensor* tensor) {
+  explicit TfLiteTensorBuffer(const TfLiteTensor* tensor)
+      : BaseTfLiteTensorBuffer(tensorflow::cpu_allocator()->AllocateRaw(
+            EIGEN_MAX_ALIGN_BYTES, tensor->bytes)) {
     // TODO(ahentz): if we can guarantee that TF Lite allocated tensors with
     // the same alignment as TensorFlow (EIGEN_MAX_ALIGN_BYTES), then we can
     // potentially eliminate the copy below.
     len_ = tensor->bytes;
-    data_ =
-        tensorflow::cpu_allocator()->AllocateRaw(EIGEN_MAX_ALIGN_BYTES, len_);
 
     LogAllocation();
 
-    if (data_) {
-      std::memcpy(data_, tensor->data.raw, tensor->bytes);
+    if (data()) {
+      std::memcpy(data(), tensor->data.raw, tensor->bytes);
     }
   }
 
   ~TfLiteTensorBuffer() override {
     LogDeallocation();
-    tensorflow::cpu_allocator()->DeallocateRaw(data_);
+    tensorflow::cpu_allocator()->DeallocateRaw(data());
   }
 
-  void* data() const override { return data_; }
   size_t size() const override { return len_; }
 
  private:
-  void* data_;
   size_t len_;
 };
 
@@ -92,14 +92,30 @@ class TfLiteTensorBuffer : public BaseTfLiteTensorBuffer {
 // TF's so we need perform the conversion here.
 class StringTfLiteTensorBuffer : public BaseTfLiteTensorBuffer {
  public:
-  explicit StringTfLiteTensorBuffer(const TfLiteTensor* tensor) {
-    num_strings_ = GetStringCount(tensor->data.raw);
-    data_ = tensorflow::cpu_allocator()->Allocate<string>(num_strings_);
+  explicit StringTfLiteTensorBuffer(const TfLiteTensor* tensor)
+      : StringTfLiteTensorBuffer(tensor, tensor->data.raw != nullptr
+                                             ? GetStringCount(tensor->data.raw)
+                                             : 0) {}
 
+  ~StringTfLiteTensorBuffer() override {
+    LogDeallocation();
+    tensorflow::cpu_allocator()->Deallocate<string>(
+        static_cast<string*>(data()), num_strings_);
+  }
+
+  size_t size() const override { return num_strings_ * sizeof(string); }
+
+ private:
+  StringTfLiteTensorBuffer(const TfLiteTensor* tensor, int num_strings)
+      : BaseTfLiteTensorBuffer(
+            num_strings != 0
+                ? tensorflow::cpu_allocator()->Allocate<string>(num_strings)
+                : nullptr),
+        num_strings_(num_strings) {
     LogAllocation();
 
-    if (data_) {
-      string* p = data_;
+    if (data()) {
+      string* p = static_cast<string*>(data());
       for (size_t i = 0; i < num_strings_; ++p, ++i) {
         auto ref = GetString(tensor->data.raw, i);
         p->assign(ref.str, ref.len);
@@ -107,16 +123,6 @@ class StringTfLiteTensorBuffer : public BaseTfLiteTensorBuffer {
     }
   }
 
-  ~StringTfLiteTensorBuffer() override {
-    LogDeallocation();
-    tensorflow::cpu_allocator()->Deallocate<string>(data_, num_strings_);
-  }
-
-  void* data() const override { return data_; }
-  size_t size() const override { return num_strings_ * sizeof(string); }
-
- private:
-  string* data_;
   int num_strings_;
 };
 
@@ -128,6 +134,10 @@ BufferMap::~BufferMap() {}
 
 bool BufferMap::HasTensor(int tensor_index) const {
   return id_to_tensor_.count(tensor_index) != 0;
+}
+
+bool BufferMap::IsTensorFlowTensor(int tensor_index) const {
+  return HasTensor(tensor_index) && owned_by_tf_.count(tensor_index) > 0;
 }
 
 tensorflow::Tensor BufferMap::GetTensor(int tensor_index) const {
@@ -154,11 +164,13 @@ void BufferMap::SetFromTfLite(int tensor_index, const TfLiteTensor* tensor) {
       GetTensorFlowDataType(tensor->type), shape, buf);
   buf->Unref();
 
-  SetFromTensorFlow(tensor_index, std::move(t));
+  id_to_tensor_[tensor_index] = std::move(t);
+  owned_by_tf_.erase(tensor_index);
 }
 
 void BufferMap::SetFromTensorFlow(int tensor_index, tensorflow::Tensor tensor) {
   id_to_tensor_[tensor_index] = std::move(tensor);
+  owned_by_tf_.insert(tensor_index);
 }
 
 }  // namespace flex
