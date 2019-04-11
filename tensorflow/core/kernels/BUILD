@@ -592,6 +592,7 @@ cc_library(
 #   #endif
 cc_library(
     name = "eigen_contraction_kernel",
+    srcs = ["eigen_contraction_kernel.cc"],
     hdrs = ["eigen_contraction_kernel.h"],
     defines = select({
         ":mkldnn_contraction_kernel": [
@@ -3713,7 +3714,6 @@ NN_DEPS = [
     ":bounds_check",
     ":conv_2d",
     ":eigen_contraction_kernel",
-    ":fused_batch_norm_util_gpu",
     ":ops_util",
     ":pooling_ops",
     "//tensorflow/core:framework",

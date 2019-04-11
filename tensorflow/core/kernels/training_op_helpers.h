@@ -113,7 +113,8 @@ mutex* GetTrainingVariableMutex(OpKernelContext* ctx, int input, bool sparse,
   if (ctx->input_dtype(input) == DT_RESOURCE) {
     if (LookupResource(ctx, HandleFromInput(ctx, input), maybe_resource).ok()) {
       if (sparse) {
-        EnsureSparseVariableAccess<Device, T>(ctx, *maybe_resource);
+        EnsureSparseVariableAccess<Device, T>(ctx, *maybe_resource)
+            .IgnoreError();
       }
       return (*maybe_resource)->mu();
     } else {
@@ -177,7 +178,7 @@ VariableInputLockHolder MaybeLockVariableInputMutexesInOrder(
     mutex* mu = GetTrainingVariableMutex<Device, T>(ctx, input, sparse, &var);
     core::ScopedUnref scoped_unref(var);
     if (mu != nullptr) {
-      if (do_lock) {
+      if (!sparse || do_lock) {
         locks->emplace_back(*mu);
       } else {
         shared_locks->emplace_back(*mu);

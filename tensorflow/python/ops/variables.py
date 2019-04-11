@@ -837,6 +837,7 @@ class Variable(six.with_metaclass(VariableMetaclass,
     """
     raise NotImplementedError
 
+  @deprecated(None, "Prefer Dataset.range instead.")
   def count_up_to(self, limit):
     """Increments this variable until it reaches `limit`.
 
@@ -931,7 +932,7 @@ class Variable(six.with_metaclass(VariableMetaclass,
 
     def _run_op(a, *args, **kwargs):
       # pylint: disable=protected-access
-      return tensor_oper(a._AsTensor(), *args, **kwargs)
+      return tensor_oper(a.value(), *args, **kwargs)
 
     functools.update_wrapper(_run_op, tensor_oper)
     setattr(cls, operator, _run_op)
@@ -1602,16 +1603,6 @@ class RefVariable(VariableV1):
     """Conversion function for Graph.as_graph_element()."""
     return self._variable
 
-  def _AsTensor(self):  # pylint: disable=invalid-name
-    """Converts this variable to a Tensor.
-
-    See `tf.Variable.value`.
-
-    Returns:
-      A `Tensor` containing the value of the variable.
-    """
-    return self._snapshot
-
   def value(self):
     """Returns the last snapshot of this variable.
 
@@ -2117,6 +2108,7 @@ class RefVariable(VariableV1):
                                               new_axis_mask=new_axis_mask,
                                               shrink_axis_mask=shrink_axis_mask)
 
+  @deprecated(None, "Prefer Dataset.range instead.")
   def count_up_to(self, limit):
     """Increments this variable until it reaches `limit`.
 

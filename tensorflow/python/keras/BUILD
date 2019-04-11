@@ -301,15 +301,23 @@ py_test(
 )
 
 py_test(
+    name = "metrics_functional_test",
+    size = "medium",
+    srcs = ["metrics_functional_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":keras",
+        "//tensorflow/python:client_testlib",
+        "//third_party/py/numpy",
+    ],
+)
+
+py_test(
     name = "metrics_test",
     size = "medium",
     srcs = ["metrics_test.py"],
+    shard_count = 4,
     srcs_version = "PY2AND3",
-    tags = [
-        "manual",
-        "no_oss",
-        "notap",
-    ],
     deps = [
         ":keras",
         "//tensorflow/python:client_testlib",
@@ -361,7 +369,7 @@ py_test(
     name = "convolutional_test",
     size = "large",
     srcs = ["layers/convolutional_test.py"],
-    shard_count = 4,
+    shard_count = 11,
     srcs_version = "PY2AND3",
     deps = [
         ":keras",
@@ -401,7 +409,7 @@ py_test(
     name = "core_test",
     size = "medium",
     srcs = ["layers/core_test.py"],
-    shard_count = 2,
+    shard_count = 3,
     srcs_version = "PY2AND3",
     deps = [
         ":keras",
@@ -466,6 +474,7 @@ py_test(
     name = "normalization_test",
     size = "medium",
     srcs = ["layers/normalization_test.py"],
+    shard_count = 3,
     srcs_version = "PY2AND3",
     tags = ["notsan"],
     deps = [
@@ -494,6 +503,7 @@ py_test(
     name = "gru_test",
     size = "large",
     srcs = ["layers/gru_test.py"],
+    shard_count = 2,
     srcs_version = "PY2AND3",
     tags = ["notsan"],  # http://b/62136390
     deps = [
@@ -524,8 +534,9 @@ py_test(
 
 py_test(
     name = "recurrent_test",
-    size = "large",
+    size = "medium",
     srcs = ["layers/recurrent_test.py"],
+    shard_count = 4,
     srcs_version = "PY2AND3",
     deps = [
         ":keras",
@@ -764,12 +775,7 @@ py_test(
     srcs = ["engine/training_test.py"],
     shard_count = 16,
     srcs_version = "PY2AND3",
-    tags = [
-        "manual",  # TODO(b/120560388)
-        "no_oss",  # TODO(b/120560388)
-        "notap",  # TODO(b/120560388)
-        "notsan",
-    ],
+    tags = ["notsan"],
     deps = [
         ":keras",
         "//tensorflow/python:client_testlib",
@@ -870,7 +876,7 @@ py_test(
 
 py_test(
     name = "topology_test",
-    size = "small",
+    size = "medium",
     srcs = ["engine/topology_test.py"],
     srcs_version = "PY2AND3",
     tags = [

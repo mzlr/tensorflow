@@ -164,9 +164,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
   TF_ASSIGN_OR_RETURN(Shape shape,
                       ShapeUtil::MakeValidatedShape(element_type, dimensions));
   auto min2maj = shape.mutable_layout()->mutable_minor_to_major();
-  min2maj->Clear();
+  min2maj->clear();
   for (int64 value : minor_to_major) {
-    min2maj->Add(value);
+    min2maj->push_back(value);
   }
   if (!shape.has_layout()) {
     return InvalidArgument("Shape has no layout.");
@@ -1067,6 +1067,11 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
   return absl::c_linear_search(shape.dimensions(), 1);
 }
 
+/* static */ Shape ShapeUtil::DropDegenerateDimensions(const Shape& shape) {
+  return FilterDimensions(
+      [&](int64 dim) -> bool { return shape.dimensions()[dim] != 1; }, shape);
+}
+
 namespace {
 
 // Helper for ForEachSubshape which visits the subshapes of the given shape in
@@ -1618,10 +1623,10 @@ ShapeUtil::DimensionsUnmodifiedByReshape(const Shape& input_shape,
   if (LayoutUtil::HasLayout(shape)) {
     Layout* layout = shape.mutable_layout();
     layout->set_format(DENSE);
-    for (size_t i = 0; i < layout->minor_to_major().size();) {
+    for (int64 i = 0; i < layout->minor_to_major().size();) {
       if (layout->minor_to_major(i) == dim_to_delete) {
         layout->mutable_minor_to_major()->erase(
-            layout->minor_to_major().begin() + i);
+            layout->mutable_minor_to_major()->begin() + i);
         continue;
       }
       if (layout->minor_to_major(i) > dim_to_delete) {
